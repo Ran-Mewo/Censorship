@@ -8,8 +8,8 @@
     "Ran"
   ],
   "contact": {
-    "homepage": "https://fabricmc.net/",
-    "sources": "https://github.com/FabricMC/fabric-example-mod"
+    "homepage": "https://modrinth.com/mods/censorship",
+    "sources": "https://github.com/Ran-Mewo/Censorship"
   },
   "license": "LGPL-3",
   "icon": "assets/censorship/icon.png",
@@ -25,6 +25,6 @@
   "depends": {
     "minecraft": "*",
     "java": ">=21",
-    "fabric-api": "*"
+    "configapi": "*"
   }
 }

@@ -1,6 +1,7 @@
 .idea/
 .gradle/
 run/
+Merged/
 # Project exclude paths
 /common/build/
 /fabric/build/
