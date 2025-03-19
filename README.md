@@ -13,16 +13,16 @@ After the first run, a configuration file will be generated. You can adjust the 
 ```
 [Settings]
   # Whether to kick the player or send them a warning message
-  kickPlayer: true
+  kickPlayer = true
   
   # Log messages to a Discord webhook
-  discordWebhookURL: ""
+  discordWebhookURL = ""
 
   [Advanced]
     # DO NOT TOUCH | URL to fetch the regex from
-    regexURL: "https://gitlab.com/distant-horizons-team/yagpdb-regex-censor/-/raw/main/discord_bot_censor_code_merge.cs"
+    regexURL = "https://gitlab.com/distant-horizons-team/yagpdb-regex-censor/-/raw/main/discord_bot_censor_code_merge.cs"
     # Show debug logs for the regex parser
-    debugMode: false
+    debugMode = false
 ```
 
 ## Credits
