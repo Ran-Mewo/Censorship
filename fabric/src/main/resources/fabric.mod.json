@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "censorship",
+  "version": "${version}",
+  "name": "Censorship",
+  "description": "A server-side mod that helps maintain chat civility by filtering inappropriate language and content.\nThis is a copy of the censorship used in the Distant Horizons discord server!",
+  "authors": [
+    "Ran"
+  ],
+  "contact": {
+    "homepage": "https://fabricmc.net/",
+    "sources": "https://github.com/FabricMC/fabric-example-mod"
+  },
+  "license": "LGPL-3",
+  "icon": "assets/censorship/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "server": [
+      "io.github.ran.censorship.fabric.CensorshipModFabric"
+    ]
+  },
+  "mixins": [
+    "censorship.mixins.json"
+  ],
+  "depends": {
+    "minecraft": "*",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

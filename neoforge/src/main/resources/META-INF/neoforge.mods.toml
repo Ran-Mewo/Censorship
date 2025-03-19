@@ -1,0 +1,32 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+#issueTrackerURL = ""
+license = "LGPL"
+
+[[mods]]
+modId = "censorship"
+version = "${version}"
+displayName = "Censorship"
+authors = "Ran"
+description = '''
+A server-side mod that helps maintain chat civility by filtering inappropriate language and content.
+This is a copy of the censorship used in the Distant Horizons discord server!
+'''
+#logoFile = ""
+
+[[dependencies.censorship]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21.4,)"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.censorship]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.4,)"
+ordering = "NONE"
+side = "SERVER"
+
+[[mixins]]
+config = "censorship.mixins.json"

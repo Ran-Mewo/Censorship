@@ -1,0 +1,7 @@
+.idea/
+.gradle/
+run/
+# Project exclude paths
+/common/build/
+/fabric/build/
+/neoforge/build/
