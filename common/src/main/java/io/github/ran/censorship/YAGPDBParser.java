@@ -40,10 +40,9 @@ public class YAGPDBParser {
     // Special case for the "free nitro site" pattern
     private static final Pattern FREE_NITRO_PATTERN = Pattern.compile("\"\\.\\+nitro.+\\(http.+\\)\"");
 
-//    static {
-//        instance.debug = true;
-//        loadParser(CensorshipConfig.DEFAULT_REGEX_URL);
-//    }
+    static {
+        loadParser(CensorshipConfig.DEFAULT_REGEX_URL, true);
+    }
 
     static void loadParser(String URL, boolean debug) {
         try {
@@ -367,16 +366,9 @@ public class YAGPDBParser {
             }
 
             String javaRegex = extractJoinStrContent(patternDefinition, description);
-
-            // Specifically handle patterns with character alternations in the middle (like sh(i/e)t)
-            if (javaRegex != null && !javaRegex.isEmpty() && description.contains("(") && description.contains("/")) {
-                javaRegex = makeAlternationsPermissive(javaRegex);
-                if (debug) {
-                    System.out.println("Made alternations permissive: " + javaRegex);
-                }
-            }
-
+            
             if (javaRegex != null && !javaRegex.isEmpty()) {
+                // Make sure patterns are accurate to the original regex
                 if (debug) {
                     System.out.println("Parsed regex: " + javaRegex);
                 }
@@ -568,9 +560,6 @@ public class YAGPDBParser {
                         if (part.startsWith("$")) {
                             String varName = part.substring(1);
                             result.append(variables.getOrDefault(varName, part));
-                        } else if (part.startsWith("(joinStr \"|\"")) {
-                            // This is likely a character alternation - make it more permissive
-                            result.append("[^a-zA-Z0-9]*");
                         } else if (part.startsWith("(joinStr")) {
                             result.append(processNestedJoinStr(part));
                         } else if (part.startsWith("\"")) {
@@ -617,7 +606,7 @@ public class YAGPDBParser {
             String params = innerExpression.substring("joinStr \"\"".length()).trim();
             return processJoinStrParts(params);
         } else if (innerExpression.startsWith("joinStr \"|\"")) {
-            // Process with our improved option handling
+            // Process options accurately
             return processOptionJoinStr(nestedJoinStr);
         }
 
@@ -643,26 +632,12 @@ public class YAGPDBParser {
                     String params = content.substring(paramsStart + "joinStr \"|\"".length()).trim();
                     String[] options = splitJoinContentParts(params);
 
-                    // Special handling for quoted alternation patterns - these are often character class alternatives
-                    // This handles patterns like (joinStr "|" "($i|$e)") which appear in the middle of words
-                    if (options.length == 1 && options[0].contains("$") && options[0].contains("|") &&
-                            !options[0].contains("?") && !options[0].contains("+") && !options[0].contains("*")) {
-                        // This is likely a character alternation - make it match any non-alphanumeric
-                        return "[^a-zA-Z0-9]*";
-                    }
-
                     // Special handling for option strings with the pattern "(" $var1 $var2 ... ")"
                     if (options.length == 1 && options[0].startsWith("\"(") && options[0].endsWith("\")\"")) {
-                        // This is a pattern like "($i|$e)" - see if we should make it more permissive
+                        // This is a pattern like "($i|$e)"
                         String innerContent = options[0].substring(2, options[0].length()-2);
 
-                        // If this contains simple variable alternatives, make it match any non-alphanumeric
-                        if (innerContent.contains("$") && innerContent.contains("|") &&
-                                innerContent.split("\\|").length <= 3) {
-                            return "[^a-zA-Z0-9]*";
-                        }
-
-                        // Otherwise, process it normally
+                        // Process it accurately
                         String[] vars = innerContent.split("\\|");
                         result.append("(");
                         for (int i = 0; i < vars.length; i++) {
@@ -692,7 +667,7 @@ public class YAGPDBParser {
                             // Remove quotes and process any variables
                             String unquoted = option.substring(1, option.length() - 1);
                             // Check if this is a parenthesized group with variables
-                            if (unquoted.startsWith("(") && unquoted.endsWith(")") &&
+                            if (unquoted.startsWith("(") && unquoted.endsWith(")") && 
                                 unquoted.contains("$") && !unquoted.contains(" ")) {
                                 // This might be a group like "($i|$e)"
                                 result.append(processParenthesizedVarGroup(unquoted));
@@ -731,18 +706,7 @@ public class YAGPDBParser {
         // Remove the outer parentheses
         String content = group.substring(1, group.length() - 1);
 
-        // If this group contains a simple alternation of variables (like "$i|$e")
-        // and it's small (likely just character alternatives), make it match any character
-        if (content.contains("$") && content.contains("|") &&
-                content.split("\\|").length <= 3 &&  // Limit to simple alternations (2-3 options)
-                !content.contains("?") && !content.contains("+") && !content.contains("*")) {
-
-            // Instead of specific character classes, just match any non-alphanumeric character
-            // This ensures we catch variants like sh@t, sh%t, etc.
-            return "[^a-zA-Z0-9]*";
-        }
-
-        // Standard processing for other cases
+        // Standard processing - preserve the alternation structure
         String[] parts = content.split("\\|");
         StringBuilder result = new StringBuilder("(");
 
@@ -793,41 +757,7 @@ public class YAGPDBParser {
      * Create a simple pattern based on the word's characters
      */
     private String createSimplePatternFromDescription(String description) {
-        // Special handling for patterns with character alternations
-        if (description.contains("(") && description.contains("/")) {
-            // For patterns like "sh(i/e)t", create a pattern that allows any character in the alternation position
-            StringBuilder pattern = new StringBuilder();
-            pattern.append(variables.getOrDefault("PREFIX", "(?:^|[^a-zA-Z0-9])+"));
-
-            // Extract the base word without the alternation
-            String baseWord = description.replaceAll("\\([^)]+\\)", ".");
-
-            // Build the pattern with a wildcard for the alternation position
-            for (int i = 0; i < baseWord.length(); i++) {
-                char c = baseWord.charAt(i);
-
-                if (c == '.') {
-                    // This is where the alternation was - use a more permissive pattern
-                    pattern.append("[^a-zA-Z0-9]*");
-                } else {
-                    String varName = String.valueOf(Character.toLowerCase(c));
-                    if (variables.containsKey(varName)) {
-                        pattern.append(variables.get(varName));
-                    } else {
-                        pattern.append("[").append(Character.toLowerCase(c)).append(Character.toUpperCase(c)).append("]");
-                    }
-                }
-
-                if (i < baseWord.length() - 1) {
-                    pattern.append(variables.getOrDefault("SPLITTER", "[^a-zA-Z0-9]*"));
-                }
-            }
-
-            pattern.append(variables.getOrDefault("SUFIX", "(?:$|[^a-zA-Z0-9])+"));
-            return pattern.toString();
-        }
-
-        // Standard processing for other patterns
+        // Standard processing for all patterns
         // Remove parenthesized parts like (u) in f(u)ck -> fck
         String simpleDesc = description.replaceAll("\\([^)]+\\)", "");
 
@@ -857,27 +787,6 @@ public class YAGPDBParser {
 
         pattern.append(variables.getOrDefault("SUFIX", "(?:$|[^a-zA-Z0-9])+"));
         return pattern.toString();
-    }
-
-    /**
-     * Make character alternations more permissive in regex patterns
-     */
-    private String makeAlternationsPermissive(String regex) {
-        // Convert patterns like "(?:^|[^a-zA-Z0-9])+[sSzZ$5][^a-zA-Z0-9]*[hH][^a-zA-Z0-9]*([1li|LI!]|[eE3é])[^a-zA-Z0-9]*[tT](?:$|[^a-zA-Z0-9])+"
-        // to "(?:^|[^a-zA-Z0-9])+[sSzZ$5][^a-zA-Z0-9]*[hH][^a-zA-Z0-9]*[^a-zA-Z0-9]*[tT](?:$|[^a-zA-Z0-9])+"
-
-        // Replace alternation groups with permissive pattern
-        Pattern alternationPattern = Pattern.compile("\\([^\\(\\)]+\\|[^\\(\\)]+\\)");
-        Matcher matcher = alternationPattern.matcher(regex);
-
-        StringBuilder result = new StringBuilder();
-        while (matcher.find()) {
-            // Replace any character alternation with [^a-zA-Z0-9]*
-            matcher.appendReplacement(result, "[^a-zA-Z0-9]*");
-        }
-        matcher.appendTail(result);
-
-        return result.toString();
     }
 
     /**
@@ -962,8 +871,8 @@ public class YAGPDBParser {
         String[] testWords = {"fuck", "shit", "damn", "hello", "minecraft", "shat (allowed with default regex)", "wtf", "lmfao",
                 "This is a test with the word F U C K hidden in it",
                 "sh!t with special characters",
-                "l m f a o spaced out", "d@mn", "f%ck", "f%%k", "f@ck", "sh@t", "sh%t", "sh*t", "f*ck",
-                "dramn", "damm", "damn", "daymn (allowed with default regex)", "piss", "ship", "pisse (allowed with default regex)", "idfk", "shpt (allowed with default regex)", "sh@t", "sh0t (allowed with default regex)"};
+                "l m f a o spaced out", "d@mn", "f%ck", "f%%k", "f@ck", "sh@t", "sh%t", "sh*t", "f*ck", "dm",
+                "dramn", "damm", "damn", "daymn (allowed with default regex)", "piss", "ship", "pisse (allowed with default regex)", "idfk", "shpt (allowed with default regex)", "sh0t (allowed with default regex)"};
 
         for (String word : testWords) {
             boolean censored = instance.containsCensoredContent(word);
