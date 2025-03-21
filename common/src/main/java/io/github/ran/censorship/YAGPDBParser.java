@@ -40,9 +40,9 @@ public class YAGPDBParser {
     // Special case for the "free nitro site" pattern
     private static final Pattern FREE_NITRO_PATTERN = Pattern.compile("\"\\.\\+nitro.+\\(http.+\\)\"");
 
-    static {
-        loadParser(CensorshipConfig.DEFAULT_REGEX_URL, true);
-    }
+//    static {
+//        loadParser(CensorshipConfig.DEFAULT_REGEX_URL, true);
+//    }
 
     static void loadParser(String URL, boolean debug) {
         try {
@@ -433,6 +433,9 @@ public class YAGPDBParser {
                 result.append(processLetterSequence(part));
             } else if (part.startsWith("(joinStr $SPLITTER_SPECIAL")) {
                 result.append(processLetterSequence(part));
+            } else if (part.startsWith("(joinStr \"[^A-z0-9'`]*\"")) {
+                // Special case for hell(a) pattern with custom splitter
+                result.append(processCustomSplitterSequence(part, "[^A-z0-9'`]*"));
             } else if (part.startsWith("(joinStr \"\"")) {
                 result.append(processNestedJoinStr(part));
             } else if (part.startsWith("(joinStr \"|\"")) {
@@ -473,7 +476,7 @@ public class YAGPDBParser {
             } else if (part.startsWith("$")) {
                 String varName = part.substring(1);
                 result.append(variables.getOrDefault(varName, part));
-            } else if (part.startsWith("\"")) {
+            } else if (part.startsWith("\"") && part.endsWith("\"")) {
                 // Handle quoted strings - remove quotes and process any nested expressions
                 String unquoted = part.substring(1, part.length()-1);
                 // Check if the quoted string contains joinStr expressions and process them
@@ -487,6 +490,63 @@ public class YAGPDBParser {
             }
         }
 
+        return result.toString();
+    }
+
+    /**
+     * Process a letter sequence with a custom splitter pattern
+     */
+    private String processCustomSplitterSequence(String joinStr, String splitterPattern) {
+        StringBuilder result = new StringBuilder();
+        
+        // Extract content between first opening parenthesis and matching closing parenthesis
+        int openParen = joinStr.indexOf('(');
+        if (openParen >= 0) {
+            int closeParen = findMatchingClosingParenthesis(joinStr, openParen);
+            if (closeParen > openParen) {
+                String content = joinStr.substring(openParen + 1, closeParen);
+                
+                // Find where the parameters start after "joinStr "splitterPattern""
+                int paramsStart = content.indexOf("joinStr \"" + splitterPattern + "\"");
+                if (paramsStart >= 0) {
+                    // Skip past the splitter pattern declaration
+                    String params = content.substring(paramsStart + ("joinStr \"" + splitterPattern + "\"").length()).trim();
+                    String[] parts = splitJoinContentParts(params);
+                    
+                    for (int i = 0; i < parts.length; i++) {
+                        String part = parts[i].trim();
+                        if (part.isEmpty()) continue;
+                        
+                        if (part.startsWith("$")) {
+                            String varName = part.substring(1);
+                            result.append(variables.getOrDefault(varName, part));
+                        } else if (part.startsWith("(joinStr \"\"")) {
+                            // Handle nested joinStr - for cases like (joinStr "" $a "?")
+                            String processedNested = processNestedJoinStr(part);
+                            // If it's optional (like $a "?"), add a question mark
+                            if (part.contains("\"?\"")) {
+                                result.append(processedNested).append("?");
+                            } else {
+                                result.append(processedNested);
+                            }
+                        } else if (part.startsWith("(joinStr")) {
+                            result.append(processNestedJoinStr(part));
+                        } else if (part.startsWith("\"") && part.endsWith("\"")) {
+                            String unquoted = part.substring(1, part.length()-1);
+                            result.append(unquoted);
+                        } else {
+                            result.append(part);
+                        }
+                        
+                        // Add custom splitter between parts (except after the last part)
+                        if (i < parts.length - 1) {
+                            result.append(splitterPattern);
+                        }
+                    }
+                }
+            }
+        }
+        
         return result.toString();
     }
 
@@ -586,28 +646,39 @@ public class YAGPDBParser {
                     String afterSplitter = content.substring(splitterIndex + splitterVar.length()).trim();
                     String[] parts = splitJoinContentParts(afterSplitter);
 
-                    // Special case for patterns like sh(i/e)t - look for alternation parts
-                    boolean hasAlternation = false;
-                    for (String part : parts) {
-                        if (part.contains("(joinStr \"|\"") && part.contains("\"(\"") && part.contains("\")\"")) {
-                            hasAlternation = true;
-                            break;
-                        }
-                    }
+//                    // Special case for patterns like sh(i/e)t - look for alternation parts
+//                    boolean hasAlternation = false;
+//                    for (String part : parts) {
+//                        if (part.contains("(joinStr \"|\"") && part.contains("\"(\"") && part.contains("\")\"")) {
+//                            hasAlternation = true;
+//                            break;
+//                        }
+//                    }
+
+                    String splitter = variables.getOrDefault(
+                        splitterVar.substring(1), // remove $ prefix
+                        splitterVar.equals("$SPLITTER") ? "[^a-zA-Z0-9]*" : "[^a-zA-Z0-9:\"~_*]*"
+                    );
 
                     for (int i = 0; i < parts.length; i++) {
                         String part = parts[i].trim();
 
                         if (part.isEmpty()) continue;
 
+                        // Add the current part
                         if (part.startsWith("$")) {
                             String varName = part.substring(1);
                             result.append(variables.getOrDefault(varName, part));
                         } else if (part.startsWith("(joinStr \"|\"") && part.contains("\"(\"") && part.contains("\")\"")) {
-                            // This is a special alternation pattern (i|e) that should be optional
+                            // This is a special alternation pattern (i|e)
+                            // We need to add splitters before and after the alternation
                             String alternation = processNestedJoinStr(part);
-                            // Make alternation optional by adding ?
-                            result.append(alternation).append("?");
+                            
+                            result.append("(");  // Open group to contain the splitter+alternation+splitter
+                            result.append(alternation).append("?"); // Make the alternation optional
+                            
+                            // End the group
+                            result.append(")");
                         } else if (part.startsWith("(joinStr")) {
                             result.append(processNestedJoinStr(part));
                         } else if (part.startsWith("\"") && part.endsWith("\"")) {
@@ -625,23 +696,9 @@ public class YAGPDBParser {
                             result.append(part);
                         }
 
-                        // Add splitter between parts but only if current and next parts aren't alternation parts
+                        // Add splitter after each part except the last one
                         if (i < parts.length - 1) {
-                            String nextPart = parts[i+1].trim();
-                            boolean skipSplitter = false;
-                            
-                            // Skip splitter before/after joinStr "|" parts or if we're in a special pattern
-                            if (part.contains("(joinStr \"|\"") || nextPart.contains("(joinStr \"|\"") || hasAlternation) {
-                                skipSplitter = true;
-                            }
-                            
-                            if (!skipSplitter) {
-                                String splitter = variables.getOrDefault(
-                                    splitterVar.substring(1), // remove $ prefix
-                                    splitterVar.equals("$SPLITTER") ? "[^a-zA-Z0-9]*" : "[^a-zA-Z0-9:\"~_*]*"
-                                );
-                                result.append(splitter);
-                            }
+                            result.append(splitter);
                         }
                     }
                 }
@@ -996,7 +1053,9 @@ public class YAGPDBParser {
                 Pattern compiledPattern = Pattern.compile(pattern.pattern, Pattern.CASE_INSENSITIVE);
                 Matcher matcher = compiledPattern.matcher(content);
                 if (matcher.find()) {
-//                    return pattern.description;
+                    if (debug) {
+                        System.out.println("Pattern " + pattern.description + " matched: " + matcher.group(0));
+                    }
                     return matcher.group(0); // Return the actual matched text
                 }
             } catch (Exception e) {
@@ -1057,7 +1116,7 @@ public class YAGPDBParser {
         // Test some sample words
         String[] testWords = {"fuck", "shit", "damn", "hello", "minecraft", "shat (allowed with default regex)", "wtf", "lmfao",
                 "This is a test with the word F U C K hidden in it",
-                "sh!t with special characters", "sht", "shet",
+                "sh!t with special characters", "sht", "shet", "hell", "hella", "fish it",
                 "l m f a o spaced out", "d@mn", "f%ck", "f%%k", "f@ck", "sh@t", "sh%t", "sh*t", "f*ck", "dm",
                 "dramn", "damm", "damn", "daymn (allowed with default regex)", "piss", "ship", "pisse (allowed with default regex)", "idfk", "shpt (allowed with default regex)", "sh0t (allowed with default regex)"};
 
