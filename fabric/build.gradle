@@ -35,6 +35,8 @@ dependencies {
 
     common(project(path: ':common', configuration: 'namedElements')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
+
+    shadowBundle 'systems.manifold:manifold-tuple-rt:2025.1.5'
 }
 
 processResources {
@@ -48,6 +50,9 @@ processResources {
 shadowJar {
     configurations = [project.configurations.shadowBundle]
     archiveClassifier = 'dev-shadow'
+
+    relocate "manifold", "censorship.manifold"
+    relocate "systems.manifold", "censorship.systems.manifold"
 }
 
 remapJar {
