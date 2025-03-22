@@ -35,7 +35,7 @@ public class DiscordWebhook {
                                 }
                             ],
                             "thumbnail": {
-                                "url": "https://minotar.net/avatar/%s"
+                                "url": "https://minotar.net/helm/%s"
                             },
                             "footer": {
                                 "text": "Censorship Mod"

@@ -366,8 +366,20 @@ public class YAGPDBParser {
             }
 
             String javaRegex = extractJoinStrContent(patternDefinition, description);
-            
+
             if (javaRegex != null && !javaRegex.isEmpty()) {
+                // Clean up the final regex by removing extraneous quotes and spaces
+                javaRegex = cleanupFinalRegex(javaRegex);
+                
+                // Properly handle word boundaries by using lookahead/lookbehind
+                // This ensures the parser can match words like "asshole" while filtering "ass"
+                if (javaRegex.endsWith(variables.getOrDefault("SUFIX", "(?:$|[^a-zA-Z0-9])+"))) {
+                    // Instead of removing SUFIX entirely, use negative lookahead for common word extensions
+                    String suffixPattern = variables.getOrDefault("SUFIX", "(?:$|[^a-zA-Z0-9])+");
+                    javaRegex = javaRegex.substring(0, javaRegex.length() - suffixPattern.length()) + 
+                                "(?:$|[^a-zA-Z0-9]|(?=[a-zA-Z0-9]*(?:hole|man|er|ers|ish|ing|ed|es|y|ity|ment)))";
+                }
+                
                 // Make sure patterns are accurate to the original regex
                 if (debug) {
                     System.out.println("Parsed regex: " + javaRegex);
@@ -382,6 +394,39 @@ public class YAGPDBParser {
                 censoredPatterns.add(new CensoredPattern(description, simplePattern));
             }
         }
+    }
+
+    /**
+     * Clean up quotes and spaces in the final regex
+     */
+    private String cleanupFinalRegex(String regex) {
+        // General fix for quoted expressions
+        regex = regex.replaceAll("\"\\s*([^\"]+)\\s*\"", "$1");
+        
+        // Fix character classes that might still have quotes
+        regex = regex.replaceAll("\"\\[([^\\]]+)\\]\"", "[$1]");
+        
+        // Fix nested alternations with multiple options
+        regex = regex.replaceAll("\\(([^()]+)\\|([^()]+)\\|([^()]+)\\)", "($1|$2|$3)");
+        regex = regex.replaceAll("\\(([^()]+)\\|([^()]+)\\)", "($1|$2)");
+        
+        // Fix double quotes around alternations
+        regex = regex.replaceAll("\"\\(([^)]+)\\)\"", "($1)");
+        
+        // Fix alternations with character classes
+        regex = regex.replaceAll("\\[([^\\]]+)\\]\\s*\\|\\s*\\[([^\\]]+)\\]", "[$1]|[$2]");
+        
+        // Handle empty option at start of alternation (used to make alternation optional)
+        regex = regex.replaceAll("\\(\\|", "(|");
+        
+        // Clean up extra spaces around alternation pipes
+        regex = regex.replaceAll("\\|\\s+", "\\|");
+        regex = regex.replaceAll("\\s+\\|", "\\|");
+        
+        // Remove any remaining double quotes
+        regex = regex.replaceAll("\"", "");
+        
+        return regex;
     }
 
     /**
@@ -441,31 +486,7 @@ public class YAGPDBParser {
             } else if (part.startsWith("(joinStr \"|\"")) {
                 // Detect special case for sh(i/e)t pattern: (joinStr "|" "(" $i $e ")")
                 if (part.contains("\"(\"") && part.contains("$") && part.endsWith("\")\"")) {
-                    StringBuilder altResult = new StringBuilder("(");
-                    
-                    // Extract all variables between parentheses
-                    int startPos = part.indexOf("\"(\"") + 3;
-                    int endPos = part.lastIndexOf("\")\"");
-                    
-                    if (startPos > 3 && endPos > startPos) {
-                        String varContent = part.substring(startPos, endPos).trim();
-                        String[] varParts = varContent.split("\\s+");
-                        boolean first = true;
-                        
-                        for (String varPart : varParts) {
-                            if (varPart.startsWith("$")) {
-                                if (!first) altResult.append("|");
-                                String varName = varPart.substring(1);
-                                altResult.append(variables.getOrDefault(varName, varPart));
-                                first = false;
-                            }
-                        }
-                        
-                        altResult.append(")");
-                        result.append(altResult);
-                    } else {
-                        result.append(processOptionJoinStr(part));
-                    }
+                    result.append(processNestedJoinStr(part));
                 } else {
                     result.append(processOptionJoinStr(part));
                 }
@@ -498,25 +519,25 @@ public class YAGPDBParser {
      */
     private String processCustomSplitterSequence(String joinStr, String splitterPattern) {
         StringBuilder result = new StringBuilder();
-        
+
         // Extract content between first opening parenthesis and matching closing parenthesis
         int openParen = joinStr.indexOf('(');
         if (openParen >= 0) {
             int closeParen = findMatchingClosingParenthesis(joinStr, openParen);
             if (closeParen > openParen) {
                 String content = joinStr.substring(openParen + 1, closeParen);
-                
+
                 // Find where the parameters start after "joinStr "splitterPattern""
                 int paramsStart = content.indexOf("joinStr \"" + splitterPattern + "\"");
                 if (paramsStart >= 0) {
                     // Skip past the splitter pattern declaration
                     String params = content.substring(paramsStart + ("joinStr \"" + splitterPattern + "\"").length()).trim();
                     String[] parts = splitJoinContentParts(params);
-                    
+
                     for (int i = 0; i < parts.length; i++) {
                         String part = parts[i].trim();
                         if (part.isEmpty()) continue;
-                        
+
                         if (part.startsWith("$")) {
                             String varName = part.substring(1);
                             result.append(variables.getOrDefault(varName, part));
@@ -537,7 +558,7 @@ public class YAGPDBParser {
                         } else {
                             result.append(part);
                         }
-                        
+
                         // Add custom splitter between parts (except after the last part)
                         if (i < parts.length - 1) {
                             result.append(splitterPattern);
@@ -546,7 +567,7 @@ public class YAGPDBParser {
                 }
             }
         }
-        
+
         return result.toString();
     }
 
@@ -646,15 +667,6 @@ public class YAGPDBParser {
                     String afterSplitter = content.substring(splitterIndex + splitterVar.length()).trim();
                     String[] parts = splitJoinContentParts(afterSplitter);
 
-//                    // Special case for patterns like sh(i/e)t - look for alternation parts
-//                    boolean hasAlternation = false;
-//                    for (String part : parts) {
-//                        if (part.contains("(joinStr \"|\"") && part.contains("\"(\"") && part.contains("\")\"")) {
-//                            hasAlternation = true;
-//                            break;
-//                        }
-//                    }
-
                     String splitter = variables.getOrDefault(
                         splitterVar.substring(1), // remove $ prefix
                         splitterVar.equals("$SPLITTER") ? "[^a-zA-Z0-9]*" : "[^a-zA-Z0-9:\"~_*]*"
@@ -671,14 +683,8 @@ public class YAGPDBParser {
                             result.append(variables.getOrDefault(varName, part));
                         } else if (part.startsWith("(joinStr \"|\"") && part.contains("\"(\"") && part.contains("\")\"")) {
                             // This is a special alternation pattern (i|e)
-                            // We need to add splitters before and after the alternation
                             String alternation = processNestedJoinStr(part);
-                            
-                            result.append("(");  // Open group to contain the splitter+alternation+splitter
-                            result.append(alternation).append("?"); // Make the alternation optional
-                            
-                            // End the group
-                            result.append(")");
+                            result.append(alternation);
                         } else if (part.startsWith("(joinStr")) {
                             result.append(processNestedJoinStr(part));
                         } else if (part.startsWith("\"") && part.endsWith("\"")) {
@@ -730,42 +736,43 @@ public class YAGPDBParser {
         } else if (innerExpression.startsWith("joinStr \"|\"")) {
             // Special case for format: (joinStr "|" "(" $i $e ")") or variations
             if (innerExpression.contains("\"(\"") && innerExpression.contains("\")\"")) {
-                StringBuilder result = new StringBuilder("(");
+                // Extract content between parentheses for alternation
+                int openParenPos = innerExpression.indexOf("\"(\"");
+                int closeParenPos = innerExpression.lastIndexOf("\")\"");
                 
-                // Parse out the variables between the parentheses
-                String[] parts = innerExpression.substring(innerExpression.indexOf("\"(\"")).split("\\s+");
-                boolean first = true;
-                
-                for (int i = 0; i < parts.length; i++) {
-                    String part = parts[i].trim();
+                if (openParenPos >= 0 && closeParenPos > openParenPos) {
+                    StringBuilder result = new StringBuilder("(");
+                    String varContent = innerExpression.substring(openParenPos + 3, closeParenPos).trim();
+                    String[] parts = splitJoinContentParts(varContent);
+                    boolean first = true;
                     
-                    if (part.isEmpty()) continue;
+                    // Handle the case where the entire alternation is optional (like "sh(i/e)t" matching "sht")
+                    // We first add an empty option at the beginning
+                    result.append("|");
                     
-                    // Skip the opening and closing parentheses
-                    if (i == 0 && part.equals("\"(\"")) continue;
-                    if (i == parts.length - 1 && part.equals("\")\"")) continue;
-                    if (part.equals("\")\"")) continue;
-                    
-                    // Process variable
-                    if (part.startsWith("$")) {
+                    for (String part : parts) {
+                        if (part.trim().isEmpty()) continue;
+                        
                         if (!first) result.append("|");
                         first = false;
-                        String varName = part.substring(1);
-                        result.append(variables.getOrDefault(varName, "$" + varName));
-                    } 
-                    // Handle quoted strings (though there shouldn't be many in this pattern)
-                    else if (part.startsWith("\"") && part.endsWith("\"")) {
-                        if (!first) result.append("|");
-                        first = false;
-                        String unquoted = part.substring(1, part.length() - 1);
-                        result.append(replaceVariables(unquoted));
+                        
+                        if (part.startsWith("$")) {
+                            String varName = part.substring(1);
+                            result.append(variables.getOrDefault(varName, "$" + varName));
+                        } else if (part.startsWith("\"") && part.endsWith("\"")) {
+                            String unquoted = part.substring(1, part.length() - 1);
+                            result.append(replaceVariables(unquoted));
+                        } else {
+                            result.append(part);
+                        }
                     }
+                    
+                    result.append(")");
+                    // Make the alternation optional using ?
+                    return result.toString() + "?";
                 }
-                
-                result.append(")");
-                return result.toString();
             }
-            
+
             // Other "|" join formats
             return processOptionJoinStr(nestedJoinStr);
         }
@@ -780,7 +787,7 @@ public class YAGPDBParser {
         if (!text.contains("(joinStr") && !text.contains("$")) {
             return text;
         }
-        
+
         // Handle simple variable replacement if there are no nested expressions
         if (!text.contains("(joinStr")) {
             return replaceVariables(text);
@@ -791,18 +798,18 @@ public class YAGPDBParser {
 
         while (start < text.length()) {
             int joinStrPos = text.indexOf("(joinStr", start);
-            
+
             if (joinStrPos == -1) {
                 // No more joinStr expressions, process the rest of the text
                 result.append(replaceVariables(text.substring(start)));
                 break;
             }
-            
+
             // Append everything before the joinStr expression with variable substitution
             if (joinStrPos > start) {
                 result.append(replaceVariables(text.substring(start, joinStrPos)));
             }
-            
+
             // Find the matching closing parenthesis for this joinStr
             int closeParen = findMatchingClosingParenthesis(text, joinStrPos);
             if (closeParen == -1) {
@@ -810,16 +817,16 @@ public class YAGPDBParser {
                 result.append(replaceVariables(text.substring(joinStrPos)));
                 break;
             }
-            
+
             // Process this complete joinStr expression
             String joinStrExpr = text.substring(joinStrPos, closeParen + 1);
             String processed = processNestedJoinStr(joinStrExpr);
             result.append(processed);
-            
+
             // Move past this expression
             start = closeParen + 1;
         }
-        
+
         return result.toString();
     }
 
@@ -833,7 +840,7 @@ public class YAGPDBParser {
 
         // Remove the outer parentheses
         String content = group.substring(1, group.length() - 1);
-        
+
         // Check if this contains nested joinStr expressions
         if (content.contains("(joinStr")) {
             return "(" + processNestedExpressions(content) + ")";
@@ -919,7 +926,8 @@ public class YAGPDBParser {
             }
         }
 
-        pattern.append(variables.getOrDefault("SUFIX", "(?:$|[^a-zA-Z0-9])+"));
+        // Use a modified suffix pattern that allows for common word extensions
+        pattern.append("(?:$|[^a-zA-Z0-9]|(?=[a-zA-Z0-9]*(?:hole|man|er|ers|ish|ing|ed|es|y|ity|ment)))");
         return pattern.toString();
     }
 
@@ -946,10 +954,14 @@ public class YAGPDBParser {
                     // These need to be treated as alternation in optional section
                     if (options.length >= 3 && options[0].equals("\"(\"") && options[options.length-1].equals("\")\"")) {
                         result.append("(");
+                        
+                        // Make the entire alternation optional by adding an empty alternative
+                        result.append("|");
+                        
                         for (int i = 1; i < options.length - 1; i++) {
                             String option = options[i].trim();
                             if (option.isEmpty()) continue;
-                            
+
                             if (option.startsWith("$")) {
                                 String varName = option.substring(1);
                                 result.append(variables.getOrDefault(varName, "$" + varName));
@@ -960,53 +972,59 @@ public class YAGPDBParser {
                             } else {
                                 result.append(option);
                             }
-                            
+
                             // Add pipe between items (but not after the last one)
                             if (i < options.length - 2 && !options[i+1].isEmpty() && !options[i+1].equals("\")\"")) {
                                 result.append("|");
                             }
                         }
                         result.append(")");
-                        return result.toString();
+                        // Make the alternation optional
+                        return result.toString() + "?";
                     }
-                    
+
                     // Special handling for option strings with the pattern "($i|$e)" format
                     if (options.length == 1 && options[0].startsWith("\"(") && options[0].endsWith("\")\"")) {
                         String innerContent = options[0].substring(2, options[0].length()-2);
-                        
-                        // Process variables within the option
+
+                        // Split by pipe for alternation - need to handle nested parentheses correctly
                         String[] vars = innerContent.split("\\|");
                         result.append("(");
+                        
+                        // Make the entire alternation optional by adding an empty alternative
+                        result.append("|");
+                        
                         for (int i = 0; i < vars.length; i++) {
                             String varRef = vars[i].trim();
                             if (varRef.startsWith("$")) {
                                 String varName = varRef.substring(1);
                                 result.append(variables.getOrDefault(varName, "$" + varName));
                             } else {
-                                result.append(varRef);
+                                result.append(replaceVariables(varRef));
                             }
-                            
+
                             if (i < vars.length - 1) {
                                 result.append("|");
                             }
                         }
                         result.append(")");
-                        return result.toString();
+                        // Make the alternation optional
+                        return result.toString() + "?";
                     }
 
                     // Regular processing for multiple distinct options
                     for (int i = 0; i < options.length; i++) {
                         String option = options[i].trim();
                         if (option.isEmpty()) continue;
-                        
+
                         if (option.startsWith("\"") && option.endsWith("\"")) {
                             // Remove quotes and process content
                             String unquoted = option.substring(1, option.length() - 1);
-                            
+
                             // Process nested joinStr expressions if any exist
                             if (unquoted.contains("(joinStr")) {
                                 result.append(processNestedExpressions(unquoted));
-                            } else if (unquoted.startsWith("(") && unquoted.contains("|")) {
+                            } else if (unquoted.startsWith("(") && unquoted.endsWith(")") && unquoted.contains("|")) {
                                 // Handle potential grouped options/variables
                                 result.append(processParenthesizedVarGroup(unquoted));
                             } else {
@@ -1020,7 +1038,7 @@ public class YAGPDBParser {
                         } else {
                             result.append(option);
                         }
-                        
+
                         // Add pipe between options
                         if (i < options.length - 1 && !options[i+1].trim().isEmpty()) {
                             result.append("|");
@@ -1115,8 +1133,9 @@ public class YAGPDBParser {
 
         // Test some sample words
         String[] testWords = {"fuck", "shit", "damn", "hello", "minecraft", "shat (allowed with default regex)", "wtf", "lmfao",
-                "This is a test with the word F U C K hidden in it",
-                "sh!t with special characters", "sht", "shet", "hell", "hella", "fish it",
+                "This is a test with the word F U C K hidden in it", "f", "nigga", "niggerman", "nigger", "niggagers", "asshole",
+                "sh!t with special characters", "sht", "shet", "hell", "hella", "fish it", "yeshi this", "meshlets", "ThoughtsHeadEmpty", "harmless website",
+                "by Twitch", "shadert",
                 "l m f a o spaced out", "d@mn", "f%ck", "f%%k", "f@ck", "sh@t", "sh%t", "sh*t", "f*ck", "dm",
                 "dramn", "damm", "damn", "daymn (allowed with default regex)", "piss", "ship", "pisse (allowed with default regex)", "idfk", "shpt (allowed with default regex)", "sh0t (allowed with default regex)"};
 
