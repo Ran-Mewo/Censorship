@@ -2,6 +2,9 @@
 .gradle/
 run/
 Merged/
+bin/
+logs/
+.vscode/
 # Project exclude paths
 /common/build/
 /fabric/build/
